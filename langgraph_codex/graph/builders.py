@@ -87,6 +87,7 @@ def build_retry_graph(
     executor: execution_base.Executor | None = None,
     validators: list[validation_utils.Validator] | None = None,
     context_builder: graph_nodes.ContextBuilder | None = None,
+    retry_strategy: graph_nodes.RetryStrategy | None = None,
     *,
     backend: execution_base.Executor | None = None,
 ) -> CompiledGraph:
@@ -95,7 +96,11 @@ def build_retry_graph(
     graph = _new_workflow_graph()
     _add_context_nodes(graph, context_builder)
     _add_execution_nodes(graph, selected_executor, validators)
-    _add_node(graph, graph_constants.GraphNode.RETRY, graph_nodes.retry_node)
+    _add_node(
+        graph,
+        graph_constants.GraphNode.RETRY,
+        graph_nodes.create_retry_node(retry_strategy),
+    )
     _connect_linear(
         graph,
         [
@@ -123,12 +128,14 @@ def build_retry_backend_graph(
     backend: execution_base.Executor | None = None,
     validators: list[validation_utils.Validator] | None = None,
     context_builder: graph_nodes.ContextBuilder | None = None,
+    retry_strategy: graph_nodes.RetryStrategy | None = None,
 ) -> CompiledGraph:
     """Build the retry graph using the older backend naming."""
     return build_retry_graph(
         executor=backend,
         validators=validators,
         context_builder=context_builder,
+        retry_strategy=retry_strategy,
     )
 
 

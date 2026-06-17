@@ -30,6 +30,7 @@ load input -> normalize context -> Codex node -> validate -> route
 ```
 
 The graph stays yours. State shape, routing, persistence, checkpointing, and domain policy stay in your application.
+Configure LangGraph persistence and checkpointers in that application layer, not inside this adapter package.
 
 ## What Stays Deterministic
 
@@ -69,6 +70,7 @@ The package deliberately does not own:
 - hidden retries or hidden routing.
 
 Those concerns belong in your application graph or infrastructure.
+If a workflow needs persistent memory or checkpoint recovery, wire it into the LangGraph app that compiles and runs the graph.
 
 ## Recommended Workflow Shape
 

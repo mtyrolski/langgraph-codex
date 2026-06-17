@@ -14,6 +14,7 @@ from langgraph_codex.types import StateMapping, StateUpdate, StateValue
 
 ContextBuilder: TypeAlias = Callable[[graph_state.WorkflowState], StateUpdate]
 CodexNode: TypeAlias = Callable[[StateMapping], StateUpdate]
+RetryStrategy: TypeAlias = Callable[[graph_state.WorkflowState], StateUpdate]
 PromptValue: TypeAlias = str | prompt_utils.PromptSpec
 PromptBuilder: TypeAlias = Callable[[Any], PromptValue]
 WorkspacePathBuilder: TypeAlias = Callable[[Any], str | pathlib.Path | None]
@@ -47,6 +48,25 @@ def retry_node(state: graph_state.WorkflowState) -> StateUpdate:
     """Increment retry_count after a failed review."""
     retry_count = int(state.get("retry_count", 0) or 0)
     return {"retry_count": retry_count + 1}
+
+
+def create_retry_node(retry_strategy: RetryStrategy | None = None) -> ContextBuilder:
+    """Create a retry node that can update prompt context before the next attempt."""
+
+    def node(state: graph_state.WorkflowState) -> StateUpdate:
+        retry_count = int(state.get("retry_count", 0) or 0)
+        next_retry_count = retry_count + 1
+        update: StateUpdate = {"retry_count": next_retry_count}
+        if retry_strategy is not None:
+            strategy_state = dict(state)
+            strategy_state.update(update)
+            strategy_update = retry_strategy(cast(graph_state.WorkflowState, strategy_state))
+            update.update(strategy_update)
+            update["retry_count"] = next_retry_count
+
+        return update
+
+    return node
 
 
 def route_after_review(state: graph_state.WorkflowState) -> graph_constants.ReviewRoute:

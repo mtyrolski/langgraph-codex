@@ -243,6 +243,59 @@ def test_retry_graph_stops_after_success(tmp_path: pathlib.Path) -> None:
     assert result["validation_result"].passed is True
 
 
+def test_retry_graph_strategy_can_update_prompt_context_after_validation_failure(
+    tmp_path: pathlib.Path,
+) -> None:
+    retry_instruction = "Use the validation feedback before retrying."
+
+    def validator(
+        state: MutableMapping[str, Any],
+    ) -> langgraph_codex.utils.validation.ValidationResult:
+        rendered_prompt = str(state.get("rendered_prompt", ""))
+        if retry_instruction not in rendered_prompt:
+            return langgraph_codex.utils.validation.failing_validation(
+                message="Missing retry guidance.",
+                details={"instruction": retry_instruction},
+            )
+
+        return langgraph_codex.utils.validation.passing_validation()
+
+    def retry_strategy(
+        state: langgraph_codex.graph.WorkflowState,
+    ) -> dict[str, Any]:
+        validation_result = state["validation_result"]
+        current_instructions = list(state.get("additional_instructions", []) or [])
+        return {
+            "additional_instructions": [
+                *current_instructions,
+                f"{validation_result.message} {retry_instruction}",
+            ]
+        }
+
+    executor = langgraph_codex.execution.FakeExecutor(stdout="ok")
+    graph = langgraph_codex.graph.build_retry_graph(
+        executor=executor,
+        validators=[validator],
+        retry_strategy=retry_strategy,
+    )
+
+    result = graph.invoke(
+        {
+            "workspace_path": tmp_path,
+            "task_title": "Retry strategy",
+            "objective": "Retry with deterministic feedback.",
+            "max_retries": 2,
+        }
+    )
+
+    assert len(executor.requests) == 2
+    assert retry_instruction not in executor.requests[0].prompt
+    assert "Missing retry guidance." in executor.requests[1].prompt
+    assert retry_instruction in executor.requests[1].prompt
+    assert result["retry_count"] == 1
+    assert result["validation_result"].passed is True
+
+
 @pytest.mark.parametrize(
     ("validation_result", "retry_count", "max_retries", "expected_route"),
     [

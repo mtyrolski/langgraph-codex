@@ -14,7 +14,6 @@ This roadmap keeps `langgraph-codex` focused on deterministic LangGraph ownershi
 - Add typed prompt recipes for common Codex tasks: code review, implementation, test generation, docs updates, and migration planning.
 - Add policy helpers that restrict writable roots, profiles, sandbox modes, and model choices by workflow.
 - Add optional JSONL event summarizers for Codex `--json` output.
-- Add richer retry strategies that can modify prompt context after failed deterministic validation.
 
 ## Deferred
 

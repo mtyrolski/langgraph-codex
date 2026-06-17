@@ -311,6 +311,29 @@ For small tests and quick starts, the package also includes complete graph build
 
 Most production applications should prefer `create_codex_node` inside their own graph.
 
+`build_retry_graph()` can accept a `retry_strategy` callback. The callback receives the
+current graph state after deterministic review has failed, including `validation_result`
+and the next `retry_count`, and returns normal state updates. Those updates are applied
+before the prompt is rendered again, so applications can add validation feedback to
+`additional_instructions`, tighten context, or attach retry-specific metadata:
+
+```python
+def retry_strategy(state):
+    validation = state["validation_result"]
+    return {
+        "additional_instructions": [
+            f"Previous validation failed: {validation.message}",
+            "Address the deterministic validation failure before continuing.",
+        ]
+    }
+
+graph = build_retry_graph(
+    executor=executor,
+    validators=validators,
+    retry_strategy=retry_strategy,
+)
+```
+
 Builder internals use exported graph constants instead of loose strings:
 
 ```python
@@ -359,7 +382,7 @@ Release publishing uses PyPI trusted publishing through the `pypi` GitHub enviro
 
 ## Design Notes
 
-The package deliberately stays small. It does not own memory, UI, checkpoint storage, broad model selection, or repository policy. Those concerns belong in the graph and infrastructure you already control.
+The package deliberately stays small. It does not own memory, UI, checkpoint storage, broad model selection, or repository policy. Persistent memory and checkpointing should be configured in the LangGraph application that owns the graph; this package only contributes bounded nodes, builders, and deterministic helpers. Those broader concerns belong in the graph and infrastructure you already control.
 
 Read more in [docs/design-philosophy.md](docs/design-philosophy.md).
 Planned follow-up work is tracked in [docs/follow-up-work.md](docs/follow-up-work.md).
