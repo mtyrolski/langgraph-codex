@@ -3,13 +3,13 @@ import json
 import pathlib
 from collections.abc import Mapping, Sequence
 from enum import StrEnum
-from typing import Final, TypeAlias
+from typing import Final, TypeAlias, cast
 
 import langgraph_codex.execution.base as execution_base
 import langgraph_codex.options as codex_options
 import langgraph_codex.utils.subprocess as subprocess_utils
 import langgraph_codex.utils.workspace as workspace_utils
-from langgraph_codex.types import StateValue
+from langgraph_codex.types import JsonEventSummarizer, StateValue
 
 CodexConfigValue: TypeAlias = str | int | float | bool
 
@@ -35,6 +35,7 @@ class CodexCommandOptions:
     output_schema_path: str | pathlib.Path | None
     output_last_message_path: str | pathlib.Path | None
     json_events: bool
+    json_event_summarizers: tuple[JsonEventSummarizer, ...]
 
 
 _DANGEROUS_CONFIG_KEYS: Final[frozenset[str]] = frozenset(
@@ -72,6 +73,7 @@ class CodexExecutor(execution_base.Executor):
     output_schema_path: str | pathlib.Path | None = None
     output_last_message_path: str | pathlib.Path | None = None
     json_events: bool = False
+    json_event_summarizers: list[JsonEventSummarizer] = dataclasses.field(default_factory=list)
 
     def execute(
         self,
@@ -258,6 +260,14 @@ class CodexExecutor(execution_base.Executor):
                 codex_options.ExecutionOption.JSON_EVENTS,
                 self.json_events,
             ),
+            json_event_summarizers=(
+                *tuple(self.json_event_summarizers),
+                *_summarizer_sequence_option(
+                    request_options,
+                    codex_options.ExecutionOption.JSON_EVENT_SUMMARIZERS,
+                    (),
+                ),
+            ),
         )
 
     def _validate_args(self, command_options: CodexCommandOptions) -> None:
@@ -378,6 +388,24 @@ def _mapping_option(
     return value
 
 
+def _summarizer_sequence_option(
+    options: Mapping[str, StateValue],
+    key: codex_options.ExecutionOption,
+    default: Sequence[JsonEventSummarizer],
+) -> tuple[JsonEventSummarizer, ...]:
+    value = _option_value(options, key, default)
+    if not _is_sequence_option(value):
+        raise TypeError(f"{key.value} must be a sequence of callables")
+
+    summarizers: list[JsonEventSummarizer] = []
+    for item in value:
+        if not callable(item):
+            raise TypeError(f"{key.value} entries must be callable")
+        summarizers.append(cast(JsonEventSummarizer, item))
+
+    return tuple(summarizers)
+
+
 def _merge_config_overrides(
     base_config: Mapping[str, CodexConfigValue],
     request_config: Mapping[str, StateValue],
@@ -438,8 +466,16 @@ def _structured_outputs_from_result(
         "cwd": str(result.cwd),
         "timed_out": result.timed_out,
     }
+    json_events: list[StateValue] | None = None
+    if command_options.json_events or command_options.json_event_summarizers:
+        json_events = _parse_json_lines(result.stdout)
     if command_options.json_events:
-        structured_outputs["json_events"] = _parse_json_lines(result.stdout)
+        structured_outputs["json_events"] = json_events or []
+    if command_options.json_event_summarizers:
+        structured_outputs["json_event_summary"] = _summarize_json_events(
+            command_options.json_event_summarizers,
+            json_events or [],
+        )
     if command_options.output_last_message_path is not None:
         last_message_path = _resolve_workspace_relative_path(
             workspace_path,
@@ -473,6 +509,16 @@ def _parse_json_value(value: str) -> StateValue | None:
         return json.loads(value)
     except json.JSONDecodeError:
         return None
+
+
+def _summarize_json_events(
+    summarizers: Sequence[JsonEventSummarizer],
+    events: Sequence[StateValue],
+) -> dict[str, StateValue]:
+    summary: dict[str, StateValue] = {}
+    for summarizer in summarizers:
+        summary.update(dict(summarizer(events)))
+    return summary
 
 
 def _is_dangerous_codex_flag(arg: str) -> bool:

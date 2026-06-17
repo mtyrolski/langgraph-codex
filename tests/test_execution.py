@@ -1,4 +1,5 @@
 import pathlib
+from collections.abc import Sequence
 from typing import Any
 
 import pytest
@@ -260,6 +261,91 @@ def test_codex_executor_captures_structured_outputs(
         "not-json",
         {"type": "completed"},
     ]
+
+
+def test_codex_executor_can_summarize_json_events_without_storing_events(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: pathlib.Path,
+) -> None:
+    def fake_run_command(
+        args: list[str],
+        cwd: str | pathlib.Path,
+        timeout_seconds: int | float | None = None,
+        input_text: str | None = None,
+    ) -> langgraph_codex.utils.subprocess.CommandResult:
+        return langgraph_codex.utils.subprocess.CommandResult(
+            args=args,
+            cwd=pathlib.Path(cwd),
+            stdout=(
+                '{"type": "started"}\n{"type": "token_count", "total_token_count": 42}\nraw line\n'
+            ),
+            stderr="",
+            returncode=0,
+        )
+
+    def summarize(events: Sequence[Any]) -> dict[str, Any]:
+        return {
+            "event_count": len(events),
+            "last_event": events[-1],
+        }
+
+    monkeypatch.setattr(
+        langgraph_codex.utils.subprocess,
+        "run_command",
+        fake_run_command,
+    )
+    executor = langgraph_codex.execution.CodexExecutor(json_event_summarizers=[summarize])
+    request = langgraph_codex.execution.ExecutionRequest(
+        workspace_path=tmp_path,
+        prompt="Return events.",
+    )
+
+    result = executor.execute(request)
+
+    assert "json_events" not in result.structured_outputs
+    assert result.structured_outputs["json_event_summary"] == {
+        "event_count": 3,
+        "last_event": "raw line",
+    }
+
+
+def test_codex_executor_accepts_request_json_event_summarizers(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: pathlib.Path,
+) -> None:
+    def fake_run_command(
+        args: list[str],
+        cwd: str | pathlib.Path,
+        timeout_seconds: int | float | None = None,
+        input_text: str | None = None,
+    ) -> langgraph_codex.utils.subprocess.CommandResult:
+        return langgraph_codex.utils.subprocess.CommandResult(
+            args=args,
+            cwd=pathlib.Path(cwd),
+            stdout='{"type": "completed"}\n',
+            stderr="",
+            returncode=0,
+        )
+
+    monkeypatch.setattr(
+        langgraph_codex.utils.subprocess,
+        "run_command",
+        fake_run_command,
+    )
+    executor = langgraph_codex.execution.CodexExecutor()
+    request = langgraph_codex.execution.ExecutionRequest(
+        workspace_path=tmp_path,
+        prompt="Return events.",
+        options={
+            langgraph_codex.ExecutionOption.JSON_EVENT_SUMMARIZERS.value: [
+                lambda events: {"first_event": events[0]},
+            ],
+        },
+    )
+
+    result = executor.execute(request)
+
+    assert result.structured_outputs["json_event_summary"] == {"first_event": {"type": "completed"}}
 
 
 def test_codex_executor_rejects_dangerous_config_overrides(tmp_path: pathlib.Path) -> None:
