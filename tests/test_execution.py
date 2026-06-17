@@ -273,6 +273,7 @@ def test_codex_executor_can_summarize_json_events_without_storing_events(
         timeout_seconds: int | float | None = None,
         input_text: str | None = None,
     ) -> langgraph_codex.utils.subprocess.CommandResult:
+        del timeout_seconds, input_text
         return langgraph_codex.utils.subprocess.CommandResult(
             args=args,
             cwd=pathlib.Path(cwd),
@@ -319,6 +320,7 @@ def test_codex_executor_accepts_request_json_event_summarizers(
         timeout_seconds: int | float | None = None,
         input_text: str | None = None,
     ) -> langgraph_codex.utils.subprocess.CommandResult:
+        del timeout_seconds, input_text
         return langgraph_codex.utils.subprocess.CommandResult(
             args=args,
             cwd=pathlib.Path(cwd),

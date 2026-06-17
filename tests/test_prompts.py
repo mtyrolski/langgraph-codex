@@ -2,6 +2,7 @@ import pathlib
 
 import pytest
 
+import langgraph_codex.prompts
 import langgraph_codex.utils.prompts
 
 
@@ -352,8 +353,6 @@ def test_docs_update_recipe_and_migration_plan_recipe_use_task_specific_context(
 
 
 def test_prompt_recipes_are_public_from_prompt_modules() -> None:
-    import langgraph_codex.prompts
-
     assert langgraph_codex.prompts.create_code_review_prompt is (
         langgraph_codex.utils.prompts.create_code_review_prompt
     )

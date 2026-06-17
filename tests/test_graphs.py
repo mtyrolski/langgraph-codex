@@ -263,7 +263,8 @@ def test_retry_graph_strategy_can_update_prompt_context_after_validation_failure
     def retry_strategy(
         state: langgraph_codex.graph.WorkflowState,
     ) -> dict[str, Any]:
-        validation_result = state["validation_result"]
+        validation_result = state.get("validation_result")
+        assert validation_result is not None
         current_instructions = list(state.get("additional_instructions", []) or [])
         return {
             "additional_instructions": [

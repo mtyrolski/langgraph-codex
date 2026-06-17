@@ -1,3 +1,6 @@
+"""Typed prompt recipes for common Codex workflows."""
+# pylint: disable=too-many-arguments
+
 import pathlib
 from collections.abc import Mapping, Sequence
 
