@@ -1,10 +1,11 @@
 import json
 import pathlib
-import typing
+from typing import Required, TypedDict
 
 from langgraph.graph import END, START
 from langgraph.graph.state import CompiledStateGraph, StateGraph
 
+from langgraph_codex import PromptSection, PromptSpec
 from langgraph_codex.execution import ExecutionResult
 from langgraph_codex.graph import create_codex_node
 from langgraph_codex.runtime import create_codex_executor, ensure_codex_authorized, print_section
@@ -13,9 +14,18 @@ AUDIT_PATH = "codebase_audit.md"
 REPOSITORY_ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 
-class AuditState(typing.TypedDict, total=False):
-    workspace_path: typing.Required[pathlib.Path]
-    repo_context: dict[str, typing.Any]
+class RepoContext(TypedDict):
+    project_files: list[str]
+    package_files: list[str]
+    test_files: list[str]
+    example_files: list[str]
+    readme_testing_claims: str
+    make_check_target: str
+
+
+class AuditState(TypedDict, total=False):
+    workspace_path: Required[pathlib.Path]
+    repo_context: RepoContext
     codex_result: ExecutionResult
     validation_passed: bool
     validation_message: str
@@ -53,9 +63,9 @@ def read_section(path: pathlib.Path, heading: str) -> str:
     return "\n".join(body)
 
 
-def inspect_codebase(state: AuditState) -> dict[str, dict[str, typing.Any]]:
+def inspect_codebase(state: AuditState) -> dict[str, RepoContext]:
     workspace_path = state["workspace_path"]
-    repo_context = {
+    repo_context: RepoContext = {
         "project_files": [
             "pyproject.toml",
             "Makefile",
@@ -72,33 +82,38 @@ def inspect_codebase(state: AuditState) -> dict[str, dict[str, typing.Any]]:
     return {"repo_context": repo_context}
 
 
-def prompt_for_codex(state: AuditState) -> str:
-    repo_context = state.get("repo_context", {})
-    return "\n".join(
-        [
-            f"Audit this existing repository and write {AUDIT_PATH}.",
-            "",
-            "Focus on whether the current tests and examples are reasonable for the actual",
-            "langgraph-codex codebase. Do not invent a service config or unrelated domain.",
-            "",
-            "Repository context gathered deterministically:",
-            json.dumps(repo_context, indent=2, sort_keys=True),
-            "",
-            "Audit requirements:",
-            "- Reference concrete files from langgraph_codex/, tests/, examples/, and README.md.",
-            "- Identify coverage that is already meaningful.",
-            "- Identify missing or weak coverage, especially around real Codex execution",
-            "  boundaries, workspace/path safety, validation behavior, and README/example",
-            "  consistency.",
-            "- Separate high-signal findings from nice-to-have cleanup.",
-            "- Include the exact line audit_scope=existing_codebase.",
-            f"- Write only {AUDIT_PATH} unless a source edit is required to make the",
-            "  audit truthful.",
-        ]
+def prompt_for_codex(state: AuditState) -> PromptSpec:
+    repo_context = state.get("repo_context")
+    if repo_context is None:
+        raise ValueError("inspect_codebase did not populate repo_context.")
+
+    return PromptSpec(
+        title="Repository Test And Example Audit",
+        objective=f"Audit this existing repository and write {AUDIT_PATH}.",
+        context_sections=[
+            PromptSection(
+                "Repository Context",
+                json.dumps(repo_context, indent=2, sort_keys=True),
+            )
+        ],
+        constraints=[
+            "Do not invent a service config or unrelated domain.",
+            f"Write only {AUDIT_PATH} unless a source edit is required to make the audit truthful.",
+        ],
+        acceptance_criteria=[
+            "Reference concrete files from langgraph_codex/, tests/, examples/, and README.md.",
+            "Identify coverage that is already meaningful.",
+            (
+                "Identify missing or weak coverage around real Codex execution boundaries, "
+                "workspace/path safety, validation behavior, and README/example consistency."
+            ),
+            "Separate high-signal findings from nice-to-have cleanup.",
+            "Include the exact line audit_scope=existing_codebase.",
+        ],
     )
 
 
-def validate_audit(state: AuditState) -> dict[str, typing.Any]:
+def validate_audit(state: AuditState) -> dict[str, bool | str]:
     result = state.get("codex_result")
     if result is None:
         return {

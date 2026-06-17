@@ -2,19 +2,23 @@ import hashlib
 import json
 import pathlib
 import tempfile
-import typing
+from typing import Required, TypedDict, cast
 
-import langgraph.graph
+from langgraph.graph import END, START
+from langgraph.graph.state import CompiledStateGraph, StateGraph
 
+from langgraph_codex import PromptFile, PromptSection, PromptSpec
 from langgraph_codex.execution import ExecutionResult
 from langgraph_codex.graph import create_codex_node
 from langgraph_codex.runtime import create_codex_executor, ensure_codex_authorized, print_section
 
 REMEDIATION_PATH = "remediation_plan.md"
+CONFIG_PATH = "service_config.json"
+EXPECTED_FINDING_COUNT = 3
 
 
-class ConfigReviewState(typing.TypedDict, total=False):
-    workspace_path: pathlib.Path
+class ConfigReviewState(TypedDict, total=False):
+    workspace_path: Required[pathlib.Path]
     config_path: str
     config_sha256: str
     findings: list[str]
@@ -24,7 +28,7 @@ class ConfigReviewState(typing.TypedDict, total=False):
 
 
 def write_service_config(workspace_path: pathlib.Path) -> pathlib.Path:
-    config_path = workspace_path / "service_config.json"
+    config_path = workspace_path / CONFIG_PATH
     config_path.write_text(
         json.dumps(
             {
@@ -45,16 +49,16 @@ def sha256_file(path: pathlib.Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def inspect_config(state: ConfigReviewState) -> dict[str, typing.Any]:
-    workspace_path = typing.cast(pathlib.Path, state.get("workspace_path"))
-    config_path = workspace_path / "service_config.json"
-    config = json.loads(config_path.read_text(encoding="utf-8"))
-    findings = []
-    if config["retry_attempts"] > 3:
+def inspect_config(state: ConfigReviewState) -> dict[str, str | list[str]]:
+    workspace_path = state["workspace_path"]
+    config_path = workspace_path / CONFIG_PATH
+    config = cast(dict[str, object], json.loads(config_path.read_text(encoding="utf-8")))
+    findings: list[str] = []
+    if _int_config_value(config, "retry_attempts") > 3:
         findings.append("retry_attempts exceeds 3")
-    if config["timeout_seconds"] > 30:
+    if _int_config_value(config, "timeout_seconds") > 30:
         findings.append("timeout_seconds exceeds 30")
-    if config["batch_size"] > 250:
+    if _int_config_value(config, "batch_size") > 250:
         findings.append("batch_size exceeds 250")
 
     return {
@@ -64,21 +68,27 @@ def inspect_config(state: ConfigReviewState) -> dict[str, typing.Any]:
     }
 
 
-def build_prompt(state: ConfigReviewState) -> str:
-    findings = typing.cast(list[str], state.get("findings", []))
-    return "\n".join(
-        [
-            "Review service_config.json and create remediation_plan.md.",
-            f"Deterministic findings: {json.dumps(findings)}",
-            "The plan must include the exact line finding_count=3.",
-            "Do not modify service_config.json.",
-        ]
+def build_prompt(state: ConfigReviewState) -> PromptSpec:
+    findings = cast(list[str], state.get("findings", []))
+    return PromptSpec(
+        title="Service Configuration Remediation",
+        objective=f"Review {CONFIG_PATH} and create {REMEDIATION_PATH}.",
+        context_sections=[
+            PromptSection("Deterministic Findings", json.dumps(findings, indent=2)),
+        ],
+        files=[PromptFile(CONFIG_PATH, "Source configuration. Do not modify this file.")],
+        constraints=[f"Do not modify {CONFIG_PATH}."],
+        acceptance_criteria=[
+            f"{REMEDIATION_PATH} exists.",
+            f"The plan includes the exact line finding_count={EXPECTED_FINDING_COUNT}.",
+            "The plan mentions retry_attempts, timeout_seconds, and batch_size.",
+        ],
     )
 
 
-def validate_output(state: ConfigReviewState) -> dict[str, typing.Any]:
-    workspace_path = typing.cast(pathlib.Path, state.get("workspace_path"))
-    config_path = workspace_path / str(state.get("config_path", "service_config.json"))
+def validate_output(state: ConfigReviewState) -> dict[str, bool | str]:
+    workspace_path = state["workspace_path"]
+    config_path = workspace_path / str(state.get("config_path", CONFIG_PATH))
     remediation_path = workspace_path / REMEDIATION_PATH
     if not remediation_path.exists():
         return {
@@ -109,23 +119,48 @@ def validate_output(state: ConfigReviewState) -> dict[str, typing.Any]:
     }
 
 
-def build_graph() -> typing.Any:
-    graph: typing.Any = langgraph.graph.StateGraph(ConfigReviewState)
-    graph.add_node("inspect_config", inspect_config)
-    graph.add_node(
-        "draft_remediation",
-        create_codex_node(
-            executor=create_codex_executor(timeout_seconds=300),
-            prompt_builder=build_prompt,
-            workspace_path=lambda state: typing.cast(pathlib.Path, state.get("workspace_path")),
-        ),
+def build_graph() -> CompiledStateGraph[
+    ConfigReviewState,
+    None,
+    ConfigReviewState,
+    ConfigReviewState,
+]:
+    graph: StateGraph[
+        ConfigReviewState,
+        None,
+        ConfigReviewState,
+        ConfigReviewState,
+    ] = StateGraph(ConfigReviewState)
+    codex_node = create_codex_node(
+        executor=create_codex_executor(timeout_seconds=300),
+        prompt_builder=build_prompt,
+        workspace_path=lambda state: state["workspace_path"],
     )
+
+    def draft_remediation(state: ConfigReviewState) -> dict[str, ExecutionResult]:
+        update = codex_node(state)
+        result = update.get("codex_result")
+        if not isinstance(result, ExecutionResult):
+            raise TypeError("Codex node did not return an ExecutionResult at codex_result.")
+
+        return {"codex_result": result}
+
+    graph.add_node("inspect_config", inspect_config)
+    graph.add_node("draft_remediation", draft_remediation)
     graph.add_node("validate_output", validate_output)
-    graph.add_edge(langgraph.graph.START, "inspect_config")
+    graph.add_edge(START, "inspect_config")
     graph.add_edge("inspect_config", "draft_remediation")
     graph.add_edge("draft_remediation", "validate_output")
-    graph.add_edge("validate_output", langgraph.graph.END)
+    graph.add_edge("validate_output", END)
     return graph.compile()
+
+
+def _int_config_value(config: dict[str, object], key: str) -> int:
+    value = config.get(key)
+    if not isinstance(value, int):
+        raise TypeError(f"{key} must be an integer in {CONFIG_PATH}.")
+
+    return value
 
 
 def main() -> None:

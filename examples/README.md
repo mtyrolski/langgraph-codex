@@ -36,4 +36,15 @@ uv run python3 -m examples.02_codebase_audit
 4. Validate files or structured output deterministically.
 5. Route or finish from your own LangGraph graph.
 
+## Quality Rules
+
+The examples are written as reference integrations, not throwaway snippets:
+
+- typed `TypedDict` state with `Required` workspace paths;
+- typed `StateGraph` / `CompiledStateGraph` return values;
+- structured `PromptSpec` prompts instead of ad hoc prompt strings where Codex is doing real work;
+- deterministic validation after Codex execution;
+- no qualified `typing.*` shortcuts;
+- no broad graph casts in example code.
+
 See [docs/design-philosophy.md](../docs/design-philosophy.md) for the reasoning behind this shape and [docs/codex-authorization.md](../docs/codex-authorization.md) for local and CI authorization.
