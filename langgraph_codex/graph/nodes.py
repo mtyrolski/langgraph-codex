@@ -1,23 +1,25 @@
 import dataclasses
 import pathlib
-import typing
+from collections.abc import Callable, Mapping
+from typing import Any, TypeAlias, cast
 
-import langgraph_codex.defaults as defaults
 import langgraph_codex.execution.base as execution_base
 import langgraph_codex.execution.fake as fake_execution
+import langgraph_codex.graph.constants as graph_constants
 import langgraph_codex.graph.state as graph_state
 import langgraph_codex.utils.prompts as prompt_utils
 import langgraph_codex.utils.validation as validation_utils
 import langgraph_codex.utils.workspace as workspace_utils
+from langgraph_codex.types import StateMapping, StateUpdate, StateValue
 
-StateUpdate = dict[str, typing.Any]
-ContextBuilder = typing.Callable[[graph_state.WorkflowState], StateUpdate]
-StateMapping = typing.Mapping[str, typing.Any]
-PromptBuilder = typing.Callable[[typing.Any], str]
-WorkspacePathBuilder = typing.Callable[[typing.Any], str | pathlib.Path | None]
-MetadataBuilder = typing.Callable[[typing.Any], dict[str, typing.Any]]
-OptionsBuilder = typing.Callable[[typing.Any], dict[str, typing.Any]]
-ResultMapper = typing.Callable[[execution_base.ExecutionResult], StateUpdate]
+ContextBuilder: TypeAlias = Callable[[graph_state.WorkflowState], StateUpdate]
+CodexNode: TypeAlias = Callable[[StateMapping], StateUpdate]
+PromptValue: TypeAlias = str | prompt_utils.PromptSpec
+PromptBuilder: TypeAlias = Callable[[Any], PromptValue]
+WorkspacePathBuilder: TypeAlias = Callable[[Any], str | pathlib.Path | None]
+MetadataBuilder: TypeAlias = Callable[[Any], Mapping[str, StateValue]]
+OptionsBuilder: TypeAlias = Callable[[Any], Mapping[str, StateValue]]
+ResultMapper: TypeAlias = Callable[[execution_base.ExecutionResult], StateUpdate]
 
 
 def build_context(state: graph_state.WorkflowState) -> StateUpdate:
@@ -29,7 +31,8 @@ def build_context(state: graph_state.WorkflowState) -> StateUpdate:
         "artifacts": dict(state.get("artifacts", {}) or {}),
         "retry_count": int(state.get("retry_count", 0) or 0),
         "max_retries": int(
-            state.get("max_retries", defaults.DEFAULT_MAX_RETRIES) or defaults.DEFAULT_MAX_RETRIES
+            state.get("max_retries", graph_constants.DEFAULT_MAX_RETRIES)
+            or graph_constants.DEFAULT_MAX_RETRIES
         ),
     }
 
@@ -46,18 +49,18 @@ def retry_node(state: graph_state.WorkflowState) -> StateUpdate:
     return {"retry_count": retry_count + 1}
 
 
-def route_after_review(state: graph_state.WorkflowState) -> str:
+def route_after_review(state: graph_state.WorkflowState) -> graph_constants.ReviewRoute:
     """Route to success, retry, or fail from validation state and retry budget."""
     validation_result = state.get("validation_result")
     if validation_result is not None and validation_result.passed:
-        return "success"
+        return graph_constants.ReviewRoute.SUCCESS
 
     retry_count = int(state.get("retry_count", 0) or 0)
     max_retries = int(state.get("max_retries", 0) or 0)
     if retry_count < max_retries:
-        return "retry"
+        return graph_constants.ReviewRoute.RETRY
 
-    return "fail"
+    return graph_constants.ReviewRoute.FAIL
 
 
 def create_build_context_node(context_builder: ContextBuilder | None = None) -> ContextBuilder:
@@ -68,7 +71,7 @@ def create_build_context_node(context_builder: ContextBuilder | None = None) -> 
         if context_builder is not None:
             merged_state = dict(state)
             merged_state.update(update)
-            builder_state = typing.cast(graph_state.WorkflowState, merged_state)
+            builder_state = cast(graph_state.WorkflowState, merged_state)
             custom_update = context_builder(builder_state)
             update.update(custom_update)
 
@@ -122,18 +125,20 @@ def create_codex_node(  # pylint: disable=too-many-arguments
     prompt_builder: PromptBuilder,
     workspace_path: str | pathlib.Path | WorkspacePathBuilder | None = None,
     result_key: str = "codex_result",
+    metadata: Mapping[str, StateValue] | None = None,
     metadata_builder: MetadataBuilder | None = None,
+    options: Mapping[str, StateValue] | None = None,
     options_builder: OptionsBuilder | None = None,
     result_mapper: ResultMapper | None = None,
-) -> typing.Callable[[StateMapping], StateUpdate]:
+) -> CodexNode:
     """Create a bounded Codex-backed node for use inside an application graph."""
 
     def node(state: StateMapping) -> StateUpdate:
         request = execution_base.ExecutionRequest(
             workspace_path=_resolve_node_workspace_path(state, workspace_path),
-            prompt=prompt_builder(state),
-            metadata=_build_node_mapping(state, metadata_builder),
-            options=_build_node_mapping(state, options_builder),
+            prompt=_render_prompt_value(prompt_builder(state)),
+            metadata=_merge_node_mapping(state, metadata, metadata_builder),
+            options=_merge_node_mapping(state, options, options_builder),
         )
         result = executor.execute(request)
         if result_mapper is not None:
@@ -162,7 +167,7 @@ def create_review_node(
                 },
             )
         else:
-            mutable_state = typing.cast(typing.MutableMapping[str, typing.Any], dict(state))
+            mutable_state = cast(validation_utils.ValidatorState, dict(state))
             validation_result = validation_utils.run_validators(
                 state=mutable_state,
                 validators=validators,
@@ -180,10 +185,10 @@ def create_review_node(
     return node
 
 
-def serialize_state_value(value: typing.Any) -> typing.Any:
+def serialize_state_value(value: StateValue) -> StateValue:
     """Convert common state values into JSON-friendly Python primitives."""
     if dataclasses.is_dataclass(value) and not isinstance(value, type):
-        dataclass_value = typing.cast(typing.Any, value)
+        dataclass_value = cast(StateValue, value)
         return serialize_state_value(dataclasses.asdict(dataclass_value))
     if isinstance(value, pathlib.Path):
         return str(value)
@@ -207,11 +212,20 @@ def _resolve_node_workspace_path(
     return workspace_utils.resolve_workspace_path(state.get("workspace_path"))
 
 
-def _build_node_mapping(
-    state: StateMapping,
-    builder: MetadataBuilder | OptionsBuilder | None,
-) -> dict[str, typing.Any]:
-    if builder is None:
-        return {}
+def _render_prompt_value(value: PromptValue) -> str:
+    if isinstance(value, prompt_utils.PromptSpec):
+        return prompt_utils.render_prompt(value)
 
-    return dict(builder(state))
+    return value
+
+
+def _merge_node_mapping(
+    state: StateMapping,
+    base_mapping: Mapping[str, StateValue] | None,
+    builder: MetadataBuilder | OptionsBuilder | None,
+) -> dict[str, StateValue]:
+    merged_mapping = dict(base_mapping or {})
+    if builder is not None:
+        merged_mapping.update(builder(state))
+
+    return merged_mapping

@@ -77,6 +77,38 @@ def test_render_prompt_returns_empty_string_for_empty_spec() -> None:
     )
 
 
+def test_render_prompt_accepts_markdown_render_options() -> None:
+    spec = langgraph_codex.utils.prompts.PromptSpec(
+        title="Custom renderer",
+        objective="Use caller-selected sections.",
+        artifacts={"b": "second", "a": "first"},
+    )
+
+    rendered_prompt = langgraph_codex.utils.prompts.render_prompt(
+        spec,
+        options=langgraph_codex.utils.prompts.MarkdownPromptRenderOptions(
+            title_level=2,
+            section_level=3,
+            bullet="*",
+            sort_artifacts=False,
+            section_order=(
+                langgraph_codex.utils.prompts.PromptBlock.OBJECTIVE,
+                langgraph_codex.utils.prompts.PromptBlock.TITLE,
+                langgraph_codex.utils.prompts.PromptBlock.ARTIFACTS,
+            ),
+        ),
+    )
+
+    assert rendered_prompt == (
+        "### Objective\n\n"
+        "Use caller-selected sections.\n\n"
+        "## Custom renderer\n\n"
+        "### Artifacts\n\n"
+        "* `b`: second\n"
+        "* `a`: first"
+    )
+
+
 def test_render_prompt_handles_files_with_and_without_descriptions() -> None:
     spec = langgraph_codex.utils.prompts.PromptSpec(
         files=[
@@ -152,6 +184,22 @@ def test_prompt_spec_from_state_coerces_context_variants(
     spec = langgraph_codex.utils.prompts.prompt_spec_from_state({"context": context_value})
 
     assert [(section.title, section.body) for section in spec.context_sections] == expected_sections
+
+
+def test_prompt_spec_from_state_accepts_context_and_file_pairs() -> None:
+    spec = langgraph_codex.utils.prompts.prompt_spec_from_state(
+        {
+            "context": [("Pair", "Pair body")],
+            "files": [("README.md", "Project overview.")],
+        }
+    )
+
+    assert [(section.title, section.body) for section in spec.context_sections] == [
+        ("Pair", "Pair body")
+    ]
+    assert [(str(prompt_file.path), prompt_file.description) for prompt_file in spec.files] == [
+        ("README.md", "Project overview.")
+    ]
 
 
 @pytest.mark.parametrize(

@@ -3,6 +3,9 @@ import langgraph_codex.utils.validation as validation
 import langgraph_codex.utils.workspace as workspace
 
 PromptFile = prompts.PromptFile
+PromptBlock = prompts.PromptBlock
+MarkdownPromptRenderOptions = prompts.MarkdownPromptRenderOptions
+MarkdownPromptRenderer = prompts.MarkdownPromptRenderer
 PromptSection = prompts.PromptSection
 PromptSpec = prompts.PromptSpec
 ValidationResult = validation.ValidationResult
@@ -11,6 +14,9 @@ validate_workspace_path = workspace.validate_workspace_path
 
 __all__ = [
     "PromptFile",
+    "PromptBlock",
+    "MarkdownPromptRenderOptions",
+    "MarkdownPromptRenderer",
     "PromptSection",
     "PromptSpec",
     "ValidationResult",

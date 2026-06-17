@@ -1,7 +1,7 @@
 import dataclasses
 import os
 import pathlib
-import typing
+from collections.abc import MutableMapping
 
 OPEN_AI_SECRET_KEY = "OPEN_AI_SECRET_KEY"
 OPEN_AI_KEY_NAME = "OPEN_AI_KEY_NAME"
@@ -24,7 +24,7 @@ class OpenAIEnvironment:
 
 def configure_open_ai_environment(
     env_path: str | pathlib.Path | None = None,
-    environ: typing.MutableMapping[str, str] | None = None,
+    environ: MutableMapping[str, str] | None = None,
 ) -> OpenAIEnvironment:
     """Load optional .env values and expose the OpenAI authorization state."""
     target_environ = environ if environ is not None else os.environ
@@ -44,7 +44,7 @@ def configure_open_ai_environment(
 
 def _load_env_file(
     env_path: str | pathlib.Path | None,
-    environ: typing.MutableMapping[str, str],
+    environ: MutableMapping[str, str],
 ) -> pathlib.Path | None:
     if env_path is None:
         return None

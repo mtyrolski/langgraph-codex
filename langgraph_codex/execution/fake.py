@@ -1,9 +1,10 @@
 import dataclasses
-import typing
+from collections.abc import Callable
 
 import langgraph_codex.execution.base as execution_base
+from langgraph_codex.types import StateValue
 
-FakeResponder = typing.Callable[
+FakeResponder = Callable[
     [execution_base.ExecutionRequest],
     execution_base.ExecutionResult,
 ]
@@ -14,8 +15,8 @@ class FakeExecutor(execution_base.Executor):
     stdout: str = "Fake executor completed."
     stderr: str = ""
     returncode: int = 0
-    structured_outputs: dict[str, typing.Any] = dataclasses.field(default_factory=dict)
-    response: typing.Any = None
+    structured_outputs: dict[str, StateValue] = dataclasses.field(default_factory=dict)
+    response: StateValue = None
     responder: FakeResponder | None = None
     requests: list[execution_base.ExecutionRequest] = dataclasses.field(default_factory=list)
 

@@ -1,6 +1,6 @@
 [project]
 name = "langgraph-codex"
-version = "0.1.0"
+version = "0.1.4"
 description = "Deterministic LangGraph orchestration with optional Codex execution"
 readme = "README.md"
 requires-python = ">=3.11"

@@ -1,9 +1,11 @@
 import pathlib
 import sys
-import typing
+from collections.abc import MutableMapping
+from typing import Any
 
 import pytest
 
+import langgraph_codex.execution
 import langgraph_codex.utils.subprocess
 import langgraph_codex.utils.validation
 
@@ -35,13 +37,13 @@ def test_run_validators_short_circuits_on_first_failure() -> None:
     calls: list[str] = []
 
     def first_validator(
-        _state: typing.MutableMapping[str, typing.Any],
+        _state: MutableMapping[str, Any],
     ) -> langgraph_codex.utils.validation.ValidationResult:
         calls.append("first")
         return langgraph_codex.utils.validation.failing_validation("first failed")
 
     def second_validator(
-        _state: typing.MutableMapping[str, typing.Any],
+        _state: MutableMapping[str, Any],
     ) -> langgraph_codex.utils.validation.ValidationResult:
         calls.append("second")
         return langgraph_codex.utils.validation.passing_validation("second passed")
@@ -133,7 +135,7 @@ def test_json_artifact_accepts_string_json() -> None:
     ],
 )
 def test_json_artifact_reports_missing_or_invalid_json(
-    state: dict[str, typing.Any],
+    state: dict[str, Any],
     message: str,
 ) -> None:
     validator = langgraph_codex.utils.validation.require_json_artifact("payload")
@@ -142,6 +144,34 @@ def test_json_artifact_reports_missing_or_invalid_json(
 
     assert result.passed is False
     assert result.message == message
+
+
+def test_require_structured_output_passes_when_key_exists() -> None:
+    validator = langgraph_codex.utils.validation.require_structured_output("last_message_json")
+    execution_result = langgraph_codex.execution.ExecutionResult(
+        stdout="",
+        stderr="",
+        returncode=0,
+        structured_outputs={"last_message_json": {"status": "accepted"}},
+    )
+
+    result = validator({"execution_result": execution_result})
+
+    assert result.passed is True
+
+
+def test_require_structured_output_reports_missing_key() -> None:
+    validator = langgraph_codex.utils.validation.require_structured_output("last_message_json")
+    execution_result = langgraph_codex.execution.ExecutionResult(
+        stdout="",
+        stderr="",
+        returncode=0,
+    )
+
+    result = validator({"execution_result": execution_result})
+
+    assert result.passed is False
+    assert result.message == "Missing structured output: last_message_json"
 
 
 def test_command_validator_runs_generic_command(tmp_path: pathlib.Path) -> None:
@@ -175,7 +205,7 @@ def test_command_validator_passes_workspace_and_timeout_to_subprocess(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: pathlib.Path,
 ) -> None:
-    calls: list[dict[str, typing.Any]] = []
+    calls: list[dict[str, Any]] = []
 
     def fake_run_command(
         args: list[str],

@@ -11,6 +11,8 @@ Put Codex inside the LangGraph you already own.
 
 It is not a chat framework, hidden agent runtime, repository automation product, or broad model abstraction layer.
 
+This README describes `langgraph-codex` v0.1.4.
+
 ## Install
 
 ```bash
@@ -130,6 +132,121 @@ OPEN_AI_MODEL=
 
 See [docs/codex-authorization.md](docs/codex-authorization.md) for local setup, GitHub Actions secrets, and CI guidance.
 
+## Typed Codex Options
+
+The Codex-facing defaults are enum-backed and exported for application code. Plain strings still work when you need a newer CLI value, but stable options no longer need naked literals:
+
+```python
+import pathlib
+
+from langgraph_codex import CodexApprovalPolicy, CodexSandbox, ExecutionOption
+from langgraph_codex.execution import CodexExecutor, ExecutionRequest
+
+executor = CodexExecutor(
+    sandbox=CodexSandbox.WORKSPACE_WRITE,
+    approval_policy=CodexApprovalPolicy.NEVER,
+    profile="ci",
+    config_overrides={"reasoning.effort": "low"},
+)
+
+request = ExecutionRequest(
+    workspace_path=pathlib.Path.cwd(),
+    prompt="Run the bounded migration and report changed files.",
+    options={
+        ExecutionOption.MODEL.value: "gpt-5.1",
+        ExecutionOption.TIMEOUT_SECONDS.value: 300,
+        ExecutionOption.EXTRA_ARGS.value: ["--json"],
+    },
+)
+```
+
+Useful enums include:
+
+- `CodexSandbox`: `READ_ONLY`, `WORKSPACE_WRITE`, `DANGER_FULL_ACCESS`
+- `CodexApprovalPolicy`: `UNTRUSTED`, `ON_FAILURE`, `ON_REQUEST`, `NEVER`
+- `ExecutionOption`: per-request model, timeout, sandbox, approval policy, profile, extra args, config overrides, writable roots, git-repo-check behavior, JSON events, output schema path, and output-last-message path
+
+Dangerous bypass flags and equivalent config overrides are rejected before subprocess execution.
+
+## Structured AI Outputs
+
+Codex can produce machine-readable output for downstream graph nodes. Use `OUTPUT_SCHEMA_PATH` to pass a JSON Schema file to the CLI, `OUTPUT_LAST_MESSAGE_PATH` to persist the final response, and `JSON_EVENTS` to parse JSONL stdout into structured graph state:
+
+```python
+import pathlib
+
+from langgraph_codex import ExecutionOption
+from langgraph_codex.execution import ExecutionRequest
+from langgraph_codex.utils.validation import require_structured_output
+
+request = ExecutionRequest(
+    workspace_path=pathlib.Path.cwd(),
+    prompt="Return a JSON object with status and changed_files.",
+    options={
+        ExecutionOption.OUTPUT_SCHEMA_PATH.value: "schemas/remediation-result.schema.json",
+        ExecutionOption.OUTPUT_LAST_MESSAGE_PATH.value: "codex-result.json",
+        ExecutionOption.JSON_EVENTS.value: True,
+    },
+)
+
+validators = [require_structured_output("last_message_json")]
+```
+
+When the last message contains valid JSON, `ExecutionResult.structured_outputs` includes:
+
+- `last_message_path`
+- `last_message`
+- `last_message_json`
+- `json_events`
+
+This keeps AI output useful for routing, validation, and persistence without scraping free-form stdout.
+
+## Prompt Rendering
+
+You can still pass normal strings to `create_codex_node`, but structured prompts are now first-class. A `prompt_builder` may return `PromptSpec`; the node renders it before calling the executor.
+
+```python
+from langgraph_codex import PromptFile, PromptSection, PromptSpec
+
+
+def prompt_for_codex(state: ReviewState) -> PromptSpec:
+    return PromptSpec(
+        title="Patch billing export",
+        objective="Fix the missing purchase order references.",
+        context_sections=[
+            PromptSection("Ticket", state["ticket"]),
+            PromptSection("Repository notes", "\n".join(state["repo_context"]["files"])),
+        ],
+        files=[PromptFile("services/billing/export.py", "Exporter under review.")],
+        acceptance_criteria=[
+            "Existing billing tests pass.",
+            "The export includes purchase order references.",
+        ],
+    )
+```
+
+For custom prompt layouts, use the Markdown renderer options:
+
+```python
+from langgraph_codex import MarkdownPromptRenderOptions, PromptBlock
+from langgraph_codex.utils.prompts import render_prompt
+
+prompt = render_prompt(
+    prompt_for_codex(state),
+    options=MarkdownPromptRenderOptions(
+        section_order=(
+            PromptBlock.OBJECTIVE,
+            PromptBlock.CONTEXT,
+            PromptBlock.FILES,
+            PromptBlock.ACCEPTANCE_CRITERIA,
+        ),
+        bullet="*",
+    ),
+)
+```
+
+The default renderer preserves the stable Markdown order used by earlier releases.
+
 ## Validation
 
 Codex output should be checked by deterministic code before anything downstream consumes it.
@@ -170,6 +287,36 @@ For small tests and quick starts, the package also includes complete graph build
 
 Most production applications should prefer `create_codex_node` inside their own graph.
 
+Builder internals use exported graph constants instead of loose strings:
+
+```python
+from langgraph_codex.graph import GraphNode, ReviewRoute
+
+assert GraphNode.REVIEW.value == "review"
+assert ReviewRoute.RETRY.value == "retry"
+```
+
+Those constants are useful when composing custom graphs, asserting route behavior, or instrumenting node-level metrics.
+
+## Advanced Node Usage
+
+`create_codex_node` supports static and dynamic metadata/options, custom result keys, custom result mapping, state-derived workspaces, and structured prompt builders:
+
+```python
+codex_node = create_codex_node(
+    executor=executor,
+    prompt_builder=prompt_for_codex,
+    workspace_path=lambda state: state["workspace_path"],
+    metadata={"workflow": "billing-remediation"},
+    metadata_builder=lambda state: {"ticket_id": state["ticket_id"]},
+    options={ExecutionOption.TIMEOUT_SECONDS.value: 300},
+    options_builder=lambda state: {ExecutionOption.MODEL.value: state["model"]},
+    result_key="remediation_result",
+)
+```
+
+This lets a deterministic graph choose the Codex model, timeout, profile, writable roots, and validation context per task without rebuilding the executor.
+
 ## CI/CD
 
 The repository validates:
@@ -191,6 +338,7 @@ Release publishing uses PyPI trusted publishing through the `pypi` GitHub enviro
 The package deliberately stays small. It does not own memory, UI, checkpoint storage, broad model selection, or repository policy. Those concerns belong in the graph and infrastructure you already control.
 
 Read more in [docs/design-philosophy.md](docs/design-philosophy.md).
+Planned follow-up work is tracked in [docs/follow-up-work.md](docs/follow-up-work.md).
 
 ## Testing Without Codex
 

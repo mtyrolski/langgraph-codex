@@ -1,5 +1,5 @@
 import pathlib
-import typing
+from typing import Any
 
 import pytest
 
@@ -118,6 +118,159 @@ def test_codex_executor_builds_safe_exec_command(tmp_path: pathlib.Path) -> None
     ]
 
 
+def test_codex_executor_supports_enums_and_request_option_overrides(
+    tmp_path: pathlib.Path,
+) -> None:
+    executor = langgraph_codex.execution.CodexExecutor(
+        sandbox=langgraph_codex.CodexSandbox.READ_ONLY,
+        approval_policy=langgraph_codex.CodexApprovalPolicy.UNTRUSTED,
+        profile="base",
+        additional_writable_roots=[tmp_path / "base-extra"],
+        config_overrides={"reasoning.effort": "low"},
+        extra_args=["--json"],
+    )
+
+    command = executor.build_command(
+        tmp_path,
+        options={
+            langgraph_codex.ExecutionOption.MODEL.value: "gpt-5.1",
+            langgraph_codex.ExecutionOption.SANDBOX.value: (
+                langgraph_codex.CodexSandbox.WORKSPACE_WRITE
+            ),
+            langgraph_codex.ExecutionOption.APPROVAL_POLICY.value: (
+                langgraph_codex.CodexApprovalPolicy.ON_REQUEST
+            ),
+            langgraph_codex.ExecutionOption.PROFILE.value: "ci",
+            langgraph_codex.ExecutionOption.ADDITIONAL_WRITABLE_ROOTS.value: [
+                tmp_path / "request-extra"
+            ],
+            langgraph_codex.ExecutionOption.CONFIG_OVERRIDES.value: {
+                "model_reasoning_summary": "auto",
+                "strict_config": True,
+            },
+            langgraph_codex.ExecutionOption.EXTRA_ARGS.value: [
+                "--output-last-message",
+                str(tmp_path / "last-message.txt"),
+            ],
+            langgraph_codex.ExecutionOption.SKIP_GIT_REPO_CHECK.value: False,
+        },
+    )
+
+    assert command[:4] == ["codex", "exec", "-m", "gpt-5.1"]
+    assert command[4:6] == ["-p", "ci"]
+    assert "read-only" not in command
+    assert "workspace-write" in command
+    assert "approval_policy='on-request'" in command
+    assert "--add-dir" in command
+    assert str((tmp_path / "base-extra").resolve()) in command
+    assert str((tmp_path / "request-extra").resolve()) in command
+    assert "model_reasoning_summary='auto'" in command
+    assert "reasoning.effort='low'" in command
+    assert "strict_config=true" in command
+    assert "--skip-git-repo-check" not in command
+    assert command[-4:] == [
+        "--json",
+        "--output-last-message",
+        str(tmp_path / "last-message.txt"),
+        "-",
+    ]
+
+
+def test_codex_executor_supports_structured_output_options(tmp_path: pathlib.Path) -> None:
+    schema_path = tmp_path / "schema.json"
+    last_message_path = tmp_path / "last-message.json"
+    executor = langgraph_codex.execution.CodexExecutor(
+        output_schema_path=schema_path,
+        output_last_message_path="last-message.json",
+        json_events=True,
+    )
+
+    command = executor.build_command(tmp_path)
+
+    assert "--output-schema" in command
+    assert str(schema_path.resolve()) in command
+    assert "--output-last-message" in command
+    assert str(last_message_path.resolve()) in command
+    assert "--json" in command
+
+
+def test_codex_executor_does_not_duplicate_json_flag(tmp_path: pathlib.Path) -> None:
+    executor = langgraph_codex.execution.CodexExecutor(json_events=True, extra_args=["--json"])
+
+    command = executor.build_command(tmp_path)
+
+    assert command.count("--json") == 1
+
+
+def test_codex_executor_captures_structured_outputs(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: pathlib.Path,
+) -> None:
+    last_message_path = tmp_path / "last-message.json"
+    calls: list[dict[str, Any]] = []
+
+    def fake_run_command(
+        args: list[str],
+        cwd: str | pathlib.Path,
+        timeout_seconds: int | float | None = None,
+        input_text: str | None = None,
+    ) -> langgraph_codex.utils.subprocess.CommandResult:
+        calls.append(
+            {
+                "args": args,
+                "cwd": cwd,
+                "timeout_seconds": timeout_seconds,
+                "input_text": input_text,
+            }
+        )
+        last_message_path.write_text('{"status": "accepted", "score": 0.97}', encoding="utf-8")
+        return langgraph_codex.utils.subprocess.CommandResult(
+            args=args,
+            cwd=pathlib.Path(cwd),
+            stdout='{"type": "started"}\nnot-json\n{"type": "completed"}\n',
+            stderr="",
+            returncode=0,
+        )
+
+    monkeypatch.setattr(
+        langgraph_codex.utils.subprocess,
+        "run_command",
+        fake_run_command,
+    )
+    executor = langgraph_codex.execution.CodexExecutor(
+        output_last_message_path="last-message.json",
+        json_events=True,
+    )
+    request = langgraph_codex.execution.ExecutionRequest(
+        workspace_path=tmp_path,
+        prompt="Return structured status.",
+    )
+
+    result = executor.execute(request)
+
+    assert calls[0]["args"][-1] == "-"
+    assert result.structured_outputs["last_message_path"] == str(last_message_path.resolve())
+    assert result.structured_outputs["last_message"] == '{"status": "accepted", "score": 0.97}'
+    assert result.structured_outputs["last_message_json"] == {
+        "status": "accepted",
+        "score": 0.97,
+    }
+    assert result.structured_outputs["json_events"] == [
+        {"type": "started"},
+        "not-json",
+        {"type": "completed"},
+    ]
+
+
+def test_codex_executor_rejects_dangerous_config_overrides(tmp_path: pathlib.Path) -> None:
+    executor = langgraph_codex.execution.CodexExecutor(
+        config_overrides={"dangerously_bypass_approvals_and_sandbox": True}
+    )
+
+    with pytest.raises(ValueError, match="Refusing dangerous Codex config override"):
+        executor.build_command(tmp_path)
+
+
 def test_codex_executor_can_use_cli_default_model(tmp_path: pathlib.Path) -> None:
     executor = langgraph_codex.execution.CodexExecutor(model=None)
 
@@ -185,7 +338,7 @@ def test_codex_executor_execute_passes_prompt_on_stdin(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: pathlib.Path,
 ) -> None:
-    calls: list[dict[str, typing.Any]] = []
+    calls: list[dict[str, Any]] = []
 
     def fake_run_command(
         args: list[str],

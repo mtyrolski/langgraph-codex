@@ -2,7 +2,8 @@ import hashlib
 import os
 import pathlib
 import shutil
-import typing
+from collections.abc import MutableMapping
+from typing import Any
 
 import pytest
 
@@ -53,7 +54,7 @@ def _env_enabled(name: str) -> bool:
 
 def executor_stdout_contains(marker: str) -> langgraph_codex.utils.validation.Validator:
     def validate(
-        state: typing.MutableMapping[str, typing.Any],
+        state: MutableMapping[str, Any],
     ) -> langgraph_codex.utils.validation.ValidationResult:
         execution_result = state["execution_result"]
         if marker in execution_result.stdout:
@@ -108,7 +109,7 @@ def test_real_codex_creates_validated_artifact(tmp_path: pathlib.Path) -> None:
     source_hash = sha256_file(source_path)
 
     def validate_summary(
-        _state: typing.MutableMapping[str, typing.Any],
+        _state: MutableMapping[str, Any],
     ) -> langgraph_codex.utils.validation.ValidationResult:
         if not output_path.exists():
             return langgraph_codex.utils.validation.failing_validation(

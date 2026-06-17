@@ -1,7 +1,7 @@
 import pathlib
 import subprocess
 import sys
-import typing
+from typing import cast
 
 import pytest
 
@@ -85,8 +85,8 @@ def test_run_command_reports_timeout(
         if timeout is None:
             raise AssertionError("timeout should be passed to subprocess.run")
         raise subprocess.TimeoutExpired(
-            cmd=typing.cast(list[str], args[0]),
-            timeout=typing.cast(int | float, timeout),
+            cmd=cast(list[str], args[0]),
+            timeout=cast(int | float, timeout),
             output="partial stdout",
             stderr="partial stderr",
         )

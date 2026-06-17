@@ -1,5 +1,6 @@
 import pathlib
-import typing
+from collections.abc import MutableMapping
+from typing import Any, TypedDict, cast
 
 import langgraph.graph
 import pytest
@@ -10,7 +11,7 @@ import langgraph_codex.graph.nodes
 import langgraph_codex.utils.validation
 
 
-class AppState(typing.TypedDict, total=False):
+class AppState(TypedDict, total=False):
     workspace_path: pathlib.Path
     ticket: str
     codex_result: langgraph_codex.execution.ExecutionResult
@@ -74,8 +75,8 @@ def test_context_builder_receives_normalized_state_and_can_add_context(
 
     def context_builder(
         state: langgraph_codex.graph.state.WorkflowState,
-    ) -> dict[str, typing.Any]:
-        workspace_path = typing.cast(pathlib.Path, state.get("workspace_path"))
+    ) -> dict[str, Any]:
+        workspace_path = cast(pathlib.Path, state.get("workspace_path"))
         seen_workspace_paths.append(workspace_path)
         return {
             "context": {"Workspace": workspace_path.name},
@@ -268,6 +269,17 @@ def test_route_after_review_handles_success_retry_and_failure_boundaries(
     assert langgraph_codex.graph.nodes.route_after_review(state) == expected_route
 
 
+def test_route_after_review_returns_route_enum() -> None:
+    state: langgraph_codex.graph.state.WorkflowState = {
+        "validation_result": langgraph_codex.utils.validation.ValidationResult(passed=True),
+    }
+
+    assert (
+        langgraph_codex.graph.nodes.route_after_review(state)
+        is langgraph_codex.graph.ReviewRoute.SUCCESS
+    )
+
+
 def test_codex_node_can_replace_node_in_existing_langgraph(tmp_path: pathlib.Path) -> None:
     executor = langgraph_codex.execution.FakeExecutor(stdout="priority=medium")
 
@@ -275,20 +287,20 @@ def test_codex_node_can_replace_node_in_existing_langgraph(tmp_path: pathlib.Pat
         return {"ticket": "Billing export is missing purchase order references."}
 
     def finalize(state: AppState) -> dict[str, str]:
-        codex_result = typing.cast(
+        codex_result = cast(
             langgraph_codex.execution.ExecutionResult,
             state.get("codex_result"),
         )
         return {"answer": codex_result.stdout}
 
-    graph: typing.Any = langgraph.graph.StateGraph(AppState)
+    graph: Any = langgraph.graph.StateGraph(AppState)
     graph.add_node("load_ticket", load_ticket)
     graph.add_node(
         "codex_triage",
         langgraph_codex.graph.create_codex_node(
             executor=executor,
             prompt_builder=lambda state: f"Triage this support ticket: {state['ticket']}",
-            workspace_path=lambda state: typing.cast(pathlib.Path, state.get("workspace_path")),
+            workspace_path=lambda state: cast(pathlib.Path, state.get("workspace_path")),
         ),
     )
     graph.add_node("finalize", finalize)
@@ -334,6 +346,33 @@ def test_codex_node_can_map_result_to_application_state(tmp_path: pathlib.Path) 
     assert result == {"answer": "ACCEPTED"}
 
 
+def test_codex_node_accepts_prompt_specs_and_merges_node_options(
+    tmp_path: pathlib.Path,
+) -> None:
+    executor = langgraph_codex.execution.FakeExecutor(stdout="done")
+    node = langgraph_codex.graph.create_codex_node(
+        executor=executor,
+        prompt_builder=lambda _state: langgraph_codex.PromptSpec(
+            title="Advanced node",
+            objective="Render structured prompt.",
+        ),
+        workspace_path=tmp_path,
+        metadata={"workflow": "audit"},
+        metadata_builder=lambda state: {"ticket": state["ticket"]},
+        options={langgraph_codex.ExecutionOption.TIMEOUT_SECONDS.value: 30},
+        options_builder=lambda _state: {langgraph_codex.ExecutionOption.MODEL.value: "gpt-5.1"},
+    )
+
+    result = node({"ticket": "A-42"})
+
+    assert result["codex_result"].stdout == "done"
+    assert executor.requests[0].prompt == (
+        "# Advanced node\n\n## Objective\n\nRender structured prompt."
+    )
+    assert executor.requests[0].metadata == {"workflow": "audit", "ticket": "A-42"}
+    assert executor.requests[0].options == {"timeout_seconds": 30, "model": "gpt-5.1"}
+
+
 def test_codex_node_passes_metadata_options_and_custom_result_key(
     tmp_path: pathlib.Path,
 ) -> None:
@@ -359,7 +398,7 @@ def test_review_node_reports_executor_failure_without_running_validators() -> No
     calls = 0
 
     def validator(
-        _state: typing.MutableMapping[str, typing.Any],
+        _state: MutableMapping[str, Any],
     ) -> langgraph_codex.utils.validation.ValidationResult:
         nonlocal calls
         calls += 1

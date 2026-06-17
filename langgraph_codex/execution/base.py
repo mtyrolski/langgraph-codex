@@ -1,15 +1,16 @@
 import abc
 import dataclasses
 import pathlib
-import typing
+
+from langgraph_codex.types import StateValue
 
 
 @dataclasses.dataclass
 class ExecutionRequest:
     workspace_path: pathlib.Path
     prompt: str
-    metadata: dict[str, typing.Any] = dataclasses.field(default_factory=dict)
-    options: dict[str, typing.Any] = dataclasses.field(default_factory=dict)
+    metadata: dict[str, StateValue] = dataclasses.field(default_factory=dict)
+    options: dict[str, StateValue] = dataclasses.field(default_factory=dict)
 
 
 @dataclasses.dataclass
@@ -17,8 +18,8 @@ class ExecutionResult:
     stdout: str
     stderr: str
     returncode: int
-    structured_outputs: dict[str, typing.Any] = dataclasses.field(default_factory=dict)
-    raw_response: typing.Any = None
+    structured_outputs: dict[str, StateValue] = dataclasses.field(default_factory=dict)
+    raw_response: StateValue = None
 
     @property
     def succeeded(self) -> bool:
