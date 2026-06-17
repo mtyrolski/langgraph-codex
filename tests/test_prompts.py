@@ -252,3 +252,120 @@ def test_prompt_spec_from_state_coerces_file_variants(
     spec = langgraph_codex.utils.prompts.prompt_spec_from_state({"files": files_value})
 
     assert [str(prompt_file.path) for prompt_file in spec.files] == expected_paths
+
+
+def test_code_review_recipe_builds_actionable_review_prompt() -> None:
+    spec = langgraph_codex.utils.prompts.create_code_review_prompt(
+        changes_summary="Diff touches prompt rendering and public exports.",
+        focus_areas=["API compatibility", "Missing tests"],
+        files=[
+            ("langgraph_codex/prompts/renderers.py", "Markdown renderer."),
+            langgraph_codex.utils.prompts.PromptFile(
+                path="tests/test_prompts.py",
+                description="Prompt coverage.",
+            ),
+        ],
+        additional_instructions=["Do not edit files during review."],
+    )
+
+    rendered_prompt = langgraph_codex.utils.prompts.render_prompt(spec)
+
+    assert spec.title == "Code Review"
+    assert [str(prompt_file.path) for prompt_file in spec.files] == [
+        "langgraph_codex/prompts/renderers.py",
+        "tests/test_prompts.py",
+    ]
+    assert (
+        "### Changes Summary\n\nDiff touches prompt rendering and public exports."
+        in rendered_prompt
+    )
+    assert "### Focus Areas\n\n- API compatibility\n- Missing tests" in rendered_prompt
+    assert "- Report findings first, ordered by severity." in rendered_prompt
+    assert "- Findings are actionable and include severity." in rendered_prompt
+    assert "- Do not edit files during review." in rendered_prompt
+
+
+def test_implementation_recipe_includes_requirements_and_validation_commands() -> None:
+    spec = langgraph_codex.utils.prompts.create_implementation_prompt(
+        objective="Add typed prompt recipes.",
+        requirements=["Expose helpers from prompt modules.", "Preserve renderer output."],
+        validation_commands=["uv run pytest tests/test_prompts.py"],
+        constraints=["Do not change graph execution behavior."],
+        acceptance_criteria=["Prompt recipe tests pass."],
+    )
+
+    assert spec.title == "Implementation"
+    assert [(section.title, section.body) for section in spec.context_sections] == [
+        (
+            "Requirements",
+            "- Expose helpers from prompt modules.\n- Preserve renderer output.",
+        ),
+        ("Validation Commands", "- uv run pytest tests/test_prompts.py"),
+    ]
+    assert "Keep changes scoped to the requested behavior." in spec.constraints
+    assert "Do not change graph execution behavior." in spec.constraints
+    assert "Prompt recipe tests pass." in spec.acceptance_criteria
+
+
+def test_test_generation_recipe_describes_behavior_and_scenarios() -> None:
+    spec = langgraph_codex.utils.prompts.create_test_generation_prompt(
+        objective="Cover prompt recipes.",
+        behavior_under_test="Recipe helpers return PromptSpec objects.",
+        test_scenarios=["Default constraints", "Caller-provided files"],
+    )
+
+    assert spec.title == "Test Generation"
+    assert [(section.title, section.body) for section in spec.context_sections] == [
+        ("Behavior Under Test", "Recipe helpers return PromptSpec objects."),
+        ("Test Scenarios", "- Default constraints\n- Caller-provided files"),
+    ]
+    assert "Reuse the project's existing test framework and fixtures." in spec.constraints
+
+
+def test_docs_update_recipe_and_migration_plan_recipe_use_task_specific_context() -> None:
+    docs_spec = langgraph_codex.utils.prompts.create_docs_update_prompt(
+        objective="Document prompt recipes.",
+        audience="LangGraph application developers.",
+        documentation_targets=["README prompt section", "Examples index"],
+    )
+    migration_spec = langgraph_codex.utils.prompts.create_migration_plan_prompt(
+        objective="Plan migration to structured prompts.",
+        current_state="Prompt builders return raw strings.",
+        target_state="Prompt builders return PromptSpec recipes.",
+        migration_steps=["Inventory prompt builders", "Replace common tasks with recipes"],
+    )
+
+    assert [(section.title, section.body) for section in docs_spec.context_sections] == [
+        ("Audience", "LangGraph application developers."),
+        ("Documentation Targets", "- README prompt section\n- Examples index"),
+    ]
+    assert "Do not document unsupported behavior." in docs_spec.constraints
+    assert [(section.title, section.body) for section in migration_spec.context_sections] == [
+        ("Current State", "Prompt builders return raw strings."),
+        ("Target State", "Prompt builders return PromptSpec recipes."),
+        (
+            "Known Migration Steps",
+            "- Inventory prompt builders\n- Replace common tasks with recipes",
+        ),
+    ]
+    assert "Separate required changes from optional cleanup." in migration_spec.constraints
+
+
+def test_prompt_recipes_are_public_from_prompt_modules() -> None:
+    import langgraph_codex.prompts
+
+    assert langgraph_codex.prompts.create_code_review_prompt is (
+        langgraph_codex.utils.prompts.create_code_review_prompt
+    )
+    assert langgraph_codex.prompts.create_implementation_prompt is (
+        langgraph_codex.utils.prompts.create_implementation_prompt
+    )
+    assert langgraph_codex.prompts.create_test_generation_prompt is (
+        langgraph_codex.utils.prompts.create_test_generation_prompt
+    )
+    assert langgraph_codex.prompts.create_docs_update_prompt is (
+        langgraph_codex.utils.prompts.create_docs_update_prompt
+    )
+    assert langgraph_codex.prompts.create_migration_plan_prompt is (
+        langgraph_codex.utils.prompts.create_migration_plan_prompt
+    )

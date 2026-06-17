@@ -247,6 +247,30 @@ prompt = render_prompt(
 
 The default renderer preserves the stable Markdown order used by earlier releases.
 
+For common Codex tasks, use typed prompt recipes that return ordinary `PromptSpec`
+objects:
+
+```python
+from langgraph_codex.prompts import PromptSpec, create_implementation_prompt
+
+
+def prompt_for_codex(state: ReviewState) -> PromptSpec:
+    return create_implementation_prompt(
+        objective="Patch the billing export workflow.",
+        requirements=[
+            "Include purchase order references in every exported row.",
+            "Keep the existing CSV schema order stable.",
+        ],
+        validation_commands=["uv run pytest tests/test_billing_export.py"],
+        files=[("services/billing/export.py", "CSV export implementation.")],
+    )
+```
+
+Recipe helpers are available for code review, implementation, test generation,
+documentation updates, and migration planning. They only assemble structured
+prompt content; rendering and graph execution continue to use the normal
+`PromptSpec` path.
+
 ## Validation
 
 Codex output should be checked by deterministic code before anything downstream consumes it.
